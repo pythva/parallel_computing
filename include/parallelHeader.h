@@ -18,7 +18,7 @@ extern struct huffmanTree huffmanTreeNode[512];
 extern unsigned char bitSequenceConstMemory[256][255];
 extern unsigned int constMemoryFlag;
 extern struct huffmanDictionary huffmanDictionary;
-extern __constant__ unsigned char d_bitSequenceConstMemory[256][255];
+//extern __constant__ unsigned char d_bitSequenceConstMemory[256][255];
 
 void sortHuffmanTree(int i, int distinctCharacterCount, int combinedHuffmanNodes);
 void buildHuffmanTree(int i, int distinctCharacterCount, int combinedHuffmanNodes);

@@ -1,0 +1,6 @@
+all:
+	mpixlc -c new_compress.c -o new_compress.o
+	mpixlc -c ../include/serialFunctions.c -o serialFunctions.o
+	nvcc -O3 -arch=sm_70 mpi-cuda.cu -c -o mpi-cuda-nvcc.o
+	mpixlc -O3 new_compress.o serialFunctions.o mpi-cuda-nvcc.o -o mpi-cuda-exe -L/usr/local/cuda-11.2/lib64/ -lcudadevrt -lcudart -lstdc++
+
