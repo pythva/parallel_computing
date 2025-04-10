@@ -1,34 +1,23 @@
+#include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <limits.h>
 
+#include "../include/parallelHeader.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
-
-// Include your headers that declare sortHuffmanTree, buildHuffmanTree, etc.
-// and declare lauchCUDAHuffmanCompress(...). Adjust as needed:
-#include "../include/parallelHeader.h"  
-// or: #include "../include/serialHeader.h"
-// or wherever your Huffman routines are declared.
 
 #define block_size 1024
 #define MIN_SCRATCH_SIZE (50UL * 1024UL * 1024UL) // 50 MB
 
-// These globals match your original CUDACompress.cu:
 struct huffmanTree *head_huffmanTreeNode;
-struct huffmanTree  huffmanTreeNode[512];
-//struct huffmanDictionary huffmanDictionary[256];
-
+struct huffmanTree huffmanTreeNode[512];
 struct huffmanDictionary huffmanDictionary;
-// If you had these in your original code:
-unsigned char bitSequenceConstMemory[256][255];
-unsigned int  constMemoryFlag = 0;
 
 // We expose this function to the C/C++ linker so MPI code can call it.
-extern "C"
-{
+extern "C" {
 /**
  * @brief Bridge function called by MPI code to compress a chunk of data on GPU.
  *
@@ -36,17 +25,19 @@ extern "C"
  * @param inputData Pointer to the local (CPU) buffer of size 'blockLength'.
  * @param blockLength The length of the local chunk in bytes.
  * @param frequency  Pointer to frequency array [256].
- * @param d_compressedData [OUT] We allocate and return a new CPU buffer that holds compressed data.
+ * @param d_compressedData [OUT] We allocate and return a new CPU buffer that
+ * holds compressed data.
  * @param compBlockLength [OUT] The final compressed size in bytes.
  */
-void runCudaLand(int            myrank,
-                 unsigned char *inputData,
-                 unsigned int   blockLength,
-                 unsigned int  *frequency,
-                 unsigned char **d_compressedData,
-                 unsigned int  *compBlockLength);
+void runCudaLand(
+    int myrank,
+    unsigned char *inputData,
+    unsigned int blockLength,
+    unsigned int *frequency,
+    unsigned char **d_compressedData,
+    unsigned int *compBlockLength
+);
 } // extern "C"
-
 
 /**
  * This function replicates the main logic from your original CUDACompress.cu,
@@ -56,12 +47,14 @@ void runCudaLand(int            myrank,
  *      compressed data + length via pointers.
  *   3) It calls lauchCUDAHuffmanCompress(...) to do the parallel bit-packing.
  */
-void runCudaLand(int            myrank,
-                 unsigned char *inputFileData,   // local chunk
-                 unsigned int   inputFileLength, // chunk length
-                 unsigned int  *frequency,       // global frequency[256]
-                 unsigned char **hostCompressedData, // out: newly allocated CPU buffer
-                 unsigned int  *hostCompressedSize)  // out: final size
+void runCudaLand(
+    int myrank,
+    unsigned char *inputFileData,       // local chunk
+    unsigned int inputFileLength,       // chunk length
+    unsigned int *frequency,            // global frequency[256]
+    unsigned char **hostCompressedData, // out: newly allocated CPU buffer
+    unsigned int *hostCompressedSize
+) // out: final size
 {
     // Optionally choose device if multiple GPUs are present
     // e.g., if you have 4 GPUs per node, do:
@@ -85,37 +78,47 @@ void runCudaLand(int            myrank,
     memset(huffmanTreeNode, 0, sizeof(huffmanTreeNode));
 
     // 1) initialize nodes of the Huffman tree
-    for (i = 0; i < 256; i++){
-        if (frequency[i] > 0){
-            huffmanTreeNode[distinctCharacterCount].count  = frequency[i];
+    for (i = 0; i < 256; i++) {
+        if (frequency[i] > 0) {
+            huffmanTreeNode[distinctCharacterCount].count = frequency[i];
             huffmanTreeNode[distinctCharacterCount].letter = i;
-            huffmanTreeNode[distinctCharacterCount].left   = NULL;
-            huffmanTreeNode[distinctCharacterCount].right  = NULL;
+            huffmanTreeNode[distinctCharacterCount].left = NULL;
+            huffmanTreeNode[distinctCharacterCount].right = NULL;
             distinctCharacterCount++;
         }
     }
 
     // 2) build the Huffman tree
-    for (i = 0; i < distinctCharacterCount - 1; i++){
+    for (i = 0; i < distinctCharacterCount - 1; i++) {
         combinedHuffmanNodes = 2 * i;
         sortHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
         buildHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
     }
 
     // 3) if there's only one distinct character
-    if (distinctCharacterCount == 1){
+    if (distinctCharacterCount == 1) {
         head_huffmanTreeNode = &huffmanTreeNode[0];
     }
 
     // 4) build Huffman dictionary
-    //memset(huffmanDictionary, 0, sizeof(huffmanDictionary));
-    //buildHuffmanDictionary(head_huffmanTreeNode, bitSequence, bitSequenceLength);
-    buildHuffmanDictionary(head_huffmanTreeNode, bitSequence, bitSequenceLength);
+    // memset(huffmanDictionary, 0, sizeof(huffmanDictionary));
+    // buildHuffmanDictionary(head_huffmanTreeNode, bitSequence,
+    // bitSequenceLength);
+    buildHuffmanDictionary(
+        head_huffmanTreeNode,
+        bitSequence,
+        bitSequenceLength
+    );
     // --------------------------------------------------------------------
     // Calculate memory requirements (as in your original code)
     // --------------------------------------------------------------------
     cudaMemGetInfo(&mem_free, &mem_total);
-    printf("Rank %d: GPU free mem: %lu (of %lu)\n", myrank, mem_free, mem_total);
+    printf(
+        "Rank %d: GPU free mem: %lu (of %lu)\n",
+        myrank,
+        mem_free,
+        mem_total
+    );
 
     // offset array requirements: total bits
     mem_offset = 0;
@@ -125,38 +128,42 @@ void runCudaLand(int            myrank,
         // total bits = sum of freq[i] * bitSequenceLength[i]
         //mem_offset += (frequency[i]) * huffmanDictionary.bitSequenceLength;
 
-	mem_offset += frequency[i] * huffmanDictionary.bitSequenceLength[i];
+    mem_offset += frequency[i] * huffmanDictionary.bitSequenceLength[i];
     }
     // round up to multiple of 8
     if (mem_offset % 8 != 0){
         mem_offset += (8 - (mem_offset % 8));
     }*/
 
-    for (i = 0; i < inputFileLength; i++){
-    	unsigned char symbol = inputFileData[i];
-    	// Use the single global huffmanDictionary to get the code length
-    		mem_offset += huffmanDictionary.bitSequenceLength[symbol];
-	}
+    for (i = 0; i < inputFileLength; i++) {
+        unsigned char symbol = inputFileData[i];
+        // Use the single global huffmanDictionary to get the code length
+        mem_offset += huffmanDictionary.bitSequenceLength[symbol];
+    }
     if (mem_offset % 8 != 0) {
-    	mem_offset += (8 - (mem_offset % 8));
-	}
+        mem_offset += (8 - (mem_offset % 8));
+    }
 
     // other memory usage
     //   inputFileLength bytes for data
     //   (inputFileLength + 1) * sizeof(unsigned int) for offset array
     //   plus dictionary overhead
-    mem_data = inputFileLength
-             + (inputFileLength + 1) * sizeof(unsigned int)
-             + sizeof(huffmanDictionary);
+    mem_data = inputFileLength + (inputFileLength + 1) * sizeof(unsigned int) +
+               sizeof(huffmanDictionary);
 
     // check if we have enough free memory
     if (mem_free <= mem_data + MIN_SCRATCH_SIZE) {
-        printf("Rank %d: Not enough GPU memory for compression.\n"
-               "        mem_free=%lu, need at least %lu\n",
-               myrank, mem_free, mem_data + MIN_SCRATCH_SIZE);
+        printf(
+            "Rank %d: Not enough GPU memory for compression.\n"
+            "        mem_free=%lu, need at least %lu\n",
+            myrank,
+            mem_free,
+            mem_data + MIN_SCRATCH_SIZE
+        );
         // In your original code, you'd do "return -1;"
         // But here we can't do that exactly because function is void.
-        // We can set *hostCompressedData=NULL and *hostCompressedSize=0, then return
+        // We can set *hostCompressedData=NULL and *hostCompressedSize=0, then
+        // return
         *hostCompressedData = NULL;
         *hostCompressedSize = 0;
         return;
@@ -177,21 +184,28 @@ void runCudaLand(int            myrank,
         integerOverflowFlag = 0;
     }
 
-    printf("Rank %d: InputFileSize=%u, OutputSize=%lu, NumberOfKernel=%d, OverflowFlag=%d\n",
-           myrank,
-           inputFileLength,
-           (unsigned long)(mem_offset/8),
-           numKernelRuns,
-           integerOverflowFlag);
+    printf(
+        "Rank %d: InputFileSize=%u, OutputSize=%lu, NumberOfKernel=%d, "
+        "OverflowFlag=%d\n",
+        myrank,
+        inputFileLength,
+        (unsigned long)(mem_offset / 8),
+        numKernelRuns,
+        integerOverflowFlag
+    );
 
     // --------------------------------------------------------------------
     // Allocate compressedDataOffset array on CPU
     // (like your original code does)
     // --------------------------------------------------------------------
-    unsigned int *compressedDataOffset = 
+    unsigned int *compressedDataOffset =
         (unsigned int *)malloc((inputFileLength + 1) * sizeof(unsigned int));
     if (!compressedDataOffset) {
-        fprintf(stderr, "Rank %d: Failed to allocate compressedDataOffset.\n", myrank);
+        fprintf(
+            stderr,
+            "Rank %d: Failed to allocate compressedDataOffset.\n",
+            myrank
+        );
         *hostCompressedData = NULL;
         *hostCompressedSize = 0;
         return;
@@ -199,12 +213,13 @@ void runCudaLand(int            myrank,
 
     // --------------------------------------------------------------------
     // Launch kernel to do the actual compression (like your original code)
-    //   lauchCUDAHuffmanCompress(...) is presumably in parallelFunctions.cu or GPUWrapper.cu
+    //   lauchCUDAHuffmanCompress(...) is presumably in parallelFunctions.cu or
+    //   GPUWrapper.cu
     // --------------------------------------------------------------------
     lauchCUDAHuffmanCompress(
-        inputFileData,           // pointer to your local chunk
-        compressedDataOffset,    // offset array
-        inputFileLength,         // length
+        inputFileData,        // pointer to your local chunk
+        compressedDataOffset, // offset array
+        inputFileLength,      // length
         numKernelRuns,
         integerOverflowFlag,
         mem_req
@@ -212,8 +227,9 @@ void runCudaLand(int            myrank,
 
     // --------------------------------------------------------------------
     // At this point, your original code wrote the compressed bits into
-    // inputFileData at the front. The total # of compressed bytes is mem_offset/8.
-    // We'll allocate a new buffer for the output and copy from inputFileData.
+    // inputFileData at the front. The total # of compressed bytes is
+    // mem_offset/8. We'll allocate a new buffer for the output and copy from
+    // inputFileData.
     // --------------------------------------------------------------------
     unsigned int totalCompressedBytes = (unsigned int)(mem_offset / 8);
 
@@ -238,7 +254,9 @@ void runCudaLand(int            myrank,
     // cleanup
     free(compressedDataOffset);
 
-    printf("Rank %d: runCudaLand done. Compressed size=%u bytes\n",
-           myrank, totalCompressedBytes);
+    printf(
+        "Rank %d: runCudaLand done. Compressed size=%u bytes\n",
+        myrank,
+        totalCompressedBytes
+    );
 }
-
