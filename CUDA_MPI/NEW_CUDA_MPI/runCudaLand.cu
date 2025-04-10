@@ -5,7 +5,7 @@
 #include <string.h>
 #include <time.h>
 
-#include "../include/parallelHeader.h"
+#include "../../include/parallelHeader.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -15,6 +15,8 @@
 struct huffmanTree *head_huffmanTreeNode;
 struct huffmanTree huffmanTreeNode[512];
 struct huffmanDictionary huffmanDictionary;
+unsigned char bitSequenceConstMemory[256][255];
+unsigned int constMemoryFlag = 0;
 
 // We expose this function to the C/C++ linker so MPI code can call it.
 extern "C" {
@@ -32,10 +34,10 @@ extern "C" {
 void runCudaLand(
     int myrank,
     unsigned char *inputData,
-    unsigned int blockLength,
-    unsigned int *frequency,
+    uint64_t blockLength,
+    uint64_t *frequency,
     unsigned char **d_compressedData,
-    unsigned int *compBlockLength
+    uint64_t *compBlockLength
 );
 } // extern "C"
 
@@ -50,10 +52,10 @@ void runCudaLand(
 void runCudaLand(
     int myrank,
     unsigned char *inputFileData,       // local chunk
-    unsigned int inputFileLength,       // chunk length
-    unsigned int *frequency,            // global frequency[256]
+    uint64_t inputFileLength,           // chunk length
+    uint64_t *frequency,                // global frequency[256]
     unsigned char **hostCompressedData, // out: newly allocated CPU buffer
-    unsigned int *hostCompressedSize
+    uint64_t *hostCompressedSize
 ) // out: final size
 {
     // Optionally choose device if multiple GPUs are present
@@ -61,13 +63,13 @@ void runCudaLand(
     cudaSetDevice(myrank % 4);
 
     // Local variables
-    unsigned int i;
+    uint64_t i;
     unsigned int distinctCharacterCount = 0, combinedHuffmanNodes = 0;
     unsigned char bitSequence[255];
     unsigned char bitSequenceLength = 0;
-    unsigned long mem_offset = 0;
-    unsigned long mem_free, mem_total;
-    unsigned long mem_data, mem_req;
+    uint64_t mem_offset = 0;
+    uint64_t mem_free, mem_total;
+    uint64_t mem_data, mem_req;
     int numKernelRuns;
     unsigned int integerOverflowFlag = 0;
 
@@ -148,7 +150,7 @@ void runCudaLand(
     //   inputFileLength bytes for data
     //   (inputFileLength + 1) * sizeof(unsigned int) for offset array
     //   plus dictionary overhead
-    mem_data = inputFileLength + (inputFileLength + 1) * sizeof(unsigned int) +
+    mem_data = inputFileLength + (inputFileLength + 1) * sizeof(uint64_t) +
                sizeof(huffmanDictionary);
 
     // check if we have enough free memory
@@ -178,18 +180,18 @@ void runCudaLand(
     // detect integer overflow corner case
     // (your original code checks if mem_req + 255 <= UINT_MAX, etc.)
     // adapted version here:
-    if ((mem_req + 255) > UINT_MAX || (mem_offset + 255) > UINT_MAX) {
+    if ((mem_req + 255) > UINT64_MAX || (mem_offset + 255) > UINT64_MAX) {
         integerOverflowFlag = 1;
     } else {
         integerOverflowFlag = 0;
     }
 
     printf(
-        "Rank %d: InputFileSize=%u, OutputSize=%lu, NumberOfKernel=%d, "
+        "Rank %d: InputFileSize=%zu, OutputSize=%zu, NumberOfKernel=%d, "
         "OverflowFlag=%d\n",
         myrank,
         inputFileLength,
-        (unsigned long)(mem_offset / 8),
+        mem_offset / 8,
         numKernelRuns,
         integerOverflowFlag
     );
@@ -198,8 +200,8 @@ void runCudaLand(
     // Allocate compressedDataOffset array on CPU
     // (like your original code does)
     // --------------------------------------------------------------------
-    unsigned int *compressedDataOffset =
-        (unsigned int *)malloc((inputFileLength + 1) * sizeof(unsigned int));
+    uint64_t *compressedDataOffset =
+        (uint64_t *)malloc((inputFileLength + 1) * sizeof(uint64_t));
     if (!compressedDataOffset) {
         fprintf(
             stderr,
@@ -231,7 +233,7 @@ void runCudaLand(
     // mem_offset/8. We'll allocate a new buffer for the output and copy from
     // inputFileData.
     // --------------------------------------------------------------------
-    unsigned int totalCompressedBytes = (unsigned int)(mem_offset / 8);
+    uint64_t totalCompressedBytes = (uint64_t)(mem_offset / 8);
 
     // allocate host output buffer
     unsigned char *tmpOutput =

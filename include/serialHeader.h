@@ -3,6 +3,7 @@
 // Header used for serial and MPI-only implementations
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 #pragma once
+#include <stdint.h>
 #include <stdlib.h>
 
 struct huffmanDictionary {
@@ -12,7 +13,7 @@ struct huffmanDictionary {
 
 struct huffmanTree {
     unsigned char letter;
-    size_t count;
+    uint64_t count;
     struct huffmanTree *left, *right;
 };
 

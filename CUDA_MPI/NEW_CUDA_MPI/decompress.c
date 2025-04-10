@@ -1,4 +1,4 @@
-#include "../include/serialHeader.h"
+#include "../../include/serialHeader.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,10 +10,10 @@ struct huffmanTree huffmanTreeNode[512];
 
 int main(int argc, char **argv) {
     clock_t start, end;
-    unsigned int cpu_time_used;
-    unsigned int i, j;
-    unsigned int distinctCharacterCount, outputFileLengthCounter,
-        outputFileLength, combinedHuffmanNodes, frequency[256],
+    uint64_t cpu_time_used;
+    uint64_t i, j;
+    unsigned int distinctCharacterCount, combinedHuffmanNodes;
+    uint64_t outputFileLengthCounter, outputFileLength, frequency[256],
         compressedFileLength;
     unsigned char currentInputBit, currentInputByte, *compressedData,
         *outputData, bitSequence[255], bitSequenceLength = 0;
@@ -24,13 +24,13 @@ int main(int argc, char **argv) {
     compressedFile = fopen(argv[1], "rb");
 
     // read the header and fill frequency array
-    fread(&outputFileLength, sizeof(unsigned int), 1, compressedFile);
-    fread(frequency, 256 * sizeof(unsigned int), 1, compressedFile);
+    fread(&outputFileLength, sizeof(uint64_t), 1, compressedFile);
+    fread(frequency, 256 * sizeof(uint64_t), 1, compressedFile);
 
     // find length of compressed file
     fseek(compressedFile, 0, SEEK_END);
-    compressedFileLength = ftell(compressedFile) - 1028;
-    fseek(compressedFile, 1028, SEEK_SET);
+    compressedFileLength = ftell(compressedFile) - 257 * sizeof(uint64_t);
+    fseek(compressedFile, 257 * sizeof(uint64_t), SEEK_SET);
 
     // allocate required memory and read the file to memoryand then close file
     compressedData = malloc((compressedFileLength) * sizeof(unsigned char));

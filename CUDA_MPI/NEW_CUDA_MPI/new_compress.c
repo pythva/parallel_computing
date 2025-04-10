@@ -3,11 +3,11 @@
 // MPI Implementation
 /*---------------------------------------------------------------------------------------------------------------------------------------------*/
 
+#include "../../include/clockcycle.h"
 #include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 // #include "../include/serialHeader.h"
 // extern void runCudaLand( int myrank );
 // struct huffmanDictionary huffmanDictionary[256];
@@ -17,21 +17,22 @@
 extern void runCudaLand(
     int myrank,
     unsigned char *inputData, // local chunk
-    unsigned int blockLength,
-    unsigned int *frequency,          // global freq
+    uint64_t blockLength,
+    uint64_t *frequency,              // global freq
     unsigned char **d_compressedData, // returned GPU comp buffer
-    unsigned int *compBlockLength
+    uint64_t *compBlockLength
 ); // returned comp length
 
 int main(int argc, char *argv[]) {
-    clock_t start, end;
-    unsigned int cpu_time_used;
-    unsigned int i, j, rank, numProcesses, blockLength;
-    unsigned int *compBlockLengthArray;
-    unsigned int distinctCharacterCount, combinedHuffmanNodes, frequency[256],
-        inputFileLength, compBlockLength;
-    unsigned char *inputFileData, *compressedData,
-        writeBit = 0, bitsFilled = 0, bitSequence[255], bitSequenceLength = 0;
+    uint64_t start, end;
+    // unsigned int cpu_time_used;
+    unsigned int rank, numProcesses;
+    uint64_t i, j, blockLength;
+    uint64_t *compBlockLengthArray;
+    // unsigned int distinctCharacterCount, combinedHuffmanNodes;
+    uint64_t frequency[256] = {0}, inputFileLength, compBlockLength;
+    unsigned char *inputFileData, *compressedData;
+    // , writeBit = 0, bitsFilled = 0, bitSequence[255], bitSequenceLength = 0;
     FILE *inputFile;
 
     MPI_Init(&argc, &argv);
@@ -42,7 +43,10 @@ int main(int argc, char *argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numProcesses);
 
-    // runCudaLand( rank );
+    MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0) {
+        start = clock_now();
+    }
 
     // get file size
     if (rank == 0) {
@@ -54,7 +58,7 @@ int main(int argc, char *argv[]) {
     }
 
     // broadcast size of file to all the processes
-    MPI_Bcast(&inputFileLength, 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&inputFileLength, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
 
     // get file chunk size
 
@@ -85,15 +89,8 @@ int main(int argc, char *argv[]) {
         &status
     );
 
-    // start clock
-    if (rank == 0) {
-        start = clock();
-    }
 
     // find the frequency of each symbols
-    for (i = 0; i < 256; i++) {
-        frequency[i] = 0;
-    }
     for (i = 0; i < blockLength; i++) {
         frequency[inputFileData[i]]++;
     }
@@ -103,15 +100,14 @@ int main(int argc, char *argv[]) {
         MPI_IN_PLACE,
         frequency,
         256,
-        MPI_UNSIGNED,
+        MPI_UINT64_T,
         MPI_SUM,
         MPI_COMM_WORLD
     );
 
     // compressedData = (unsigned char *)malloc(blockLength * sizeof(unsigned
     // char));
-    compBlockLengthArray =
-        (unsigned int *)malloc(numProcesses * sizeof(unsigned int));
+    compBlockLengthArray = (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
 
     /*
     // initialize nodes of huffman tree
@@ -178,22 +174,28 @@ int main(int argc, char *argv[]) {
     // unsigned int gpuCompSize = 0;
 
     unsigned char *gpuCompressedData = NULL;
-    unsigned int gpuCompressedSize = 0;
+    uint64_t gpuCompressedSize = 0;
 
     // printf("%d", blockLength);
     printf("Rank %d: blockLength = %d\n", rank, blockLength);
 
     // Print inputFileData content (first N bytes for brevity)
     printf("Rank %d: inputFileData = [", rank);
-    for (unsigned int i = 0; i < (blockLength < 16 ? blockLength : 16); i++) {
+    for (uint64_t i = 0; i < (blockLength < 8 ? blockLength : 8); i++) {
         printf("%02x ", inputFileData[i]); // Print in hex for readability
     }
-    printf("...]\n");
+    printf("...");
+    for (uint64_t i = (blockLength < 16 ? 0 : blockLength - 16);
+         i < blockLength;
+         i++) {
+        printf(" %02x", inputFileData[i]); // Print in hex for readability
+    }
+    printf("]\n");
 
     printf("Rank %d: frequency[] = { ", rank);
     for (int i = 0; i < 256; i++) {
         if (frequency[i] > 0) {
-            printf("%c: %u  ", (i >= 32 && i <= 126 ? i : '.'), frequency[i]);
+            printf("%c: %llu  ", (i >= 32 && i <= 126 ? i : '.'), frequency[i]);
         }
     }
     runCudaLand(
@@ -214,10 +216,10 @@ int main(int argc, char *argv[]) {
     MPI_Gather(
         &compBlockLength,
         1,
-        MPI_UNSIGNED,
+        MPI_UINT64_T,
         compBlockLengthArray,
         1,
-        MPI_UNSIGNED,
+        MPI_UINT64_T,
         0,
         MPI_COMM_WORLD
     );
@@ -225,13 +227,13 @@ int main(int argc, char *argv[]) {
     // ---- RANK 0 COMPUTES OFFSETS ----
     // We’ll store the starting offset for each rank’s data in
     // compBlockOffset[].
-    unsigned int *compBlockOffsetArray = NULL; // NEW
-
+    uint64_t *compBlockOffsetArray = NULL; // NEW
+    uint64_t currentOffset;
     if (rank == 0) {
         compBlockOffsetArray =
-            (unsigned int *)malloc(numProcesses * sizeof(unsigned int));
-        unsigned int currentOffset =
-            4 /*for inputFileLength*/ + 4 * 256 /*for frequency[256]*/;
+            (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
+        currentOffset = sizeof(uint64_t) /*for inputFileLength*/ +
+                        sizeof(uint64_t) * 256 /*for frequency[256]*/;
 
         // Rank 0 starts at offset = currentOffset
         compBlockOffsetArray[0] = currentOffset;
@@ -246,12 +248,12 @@ int main(int argc, char *argv[]) {
         // Rank 0 has computed compBlockOffsetArray
     } else {
         compBlockOffsetArray =
-            (unsigned int *)malloc(numProcesses * sizeof(unsigned int));
+            (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
     }
     MPI_Bcast(
         compBlockOffsetArray,
         numProcesses,
-        MPI_UNSIGNED,
+        MPI_UINT64_T,
         0,
         MPI_COMM_WORLD
     );
@@ -272,17 +274,17 @@ int main(int argc, char *argv[]) {
             0,
             &inputFileLength,
             1,
-            MPI_UNSIGNED,
+            MPI_UINT64_T,
             MPI_STATUS_IGNORE
         );
 
-        // Write frequency array at offset 4
+        // Write frequency array at offset 8
         MPI_File_write_at(
             mpi_compressedFile,
-            4,
+            sizeof(uint64_t),
             frequency,
             256,
-            MPI_UNSIGNED,
+            MPI_UINT64_T,
             MPI_STATUS_IGNORE
         );
         // If you want to store `numProcesses` or anything else in the header,
@@ -301,12 +303,22 @@ int main(int argc, char *argv[]) {
     MPI_File_close(&mpi_compressedFile);
     MPI_File_close(&mpi_inputFile);
     MPI_Barrier(MPI_COMM_WORLD);
+    if (rank == 0) {
+        end = clock_now();
+        printf(
+            "Finished with %u ranks | input size %llu | output size %llu | "
+            "nanoseconds %llu\n",
+            numProcesses,
+            inputFileLength,
+            currentOffset,
+            end - start
+        );
+    }
 
     if (compBlockOffsetArray != NULL) {
         free(compBlockOffsetArray);
     }
 
-    free(compBlockLengthArray);
     free(inputFileData);
     free(compressedData);
     // if (compressedData) free(compressedData);

@@ -11,9 +11,9 @@ struct huffmanTree huffmanTreeNode[512];
 int main(int argc, char **argv) {
     clock_t start, end;
     unsigned int cpu_time_used;
-    size_t i, j;
+    uint64_t i, j;
     unsigned int distinctCharacterCount, combinedHuffmanNodes;
-    size_t frequency[256], inputFileLength, compressedFileLength;
+    uint64_t frequency[256], inputFileLength, compressedFileLength;
     unsigned char *inputFileData, *compressedData,
         writeBit = 0, bitsFilled = 0, bitSequence[255], bitSequenceLength = 0;
     FILE *inputFile, *compressedFile;
@@ -36,6 +36,11 @@ int main(int argc, char **argv) {
     }
     for (i = 0; i < inputFileLength; i++) {
         frequency[inputFileData[i]]++;
+    }
+    for (i = 0; i < 256; i++) {
+        if (frequency[i]) {
+            printf("%c %llu\n", i, frequency[i]);
+        }
     }
 
     // initialize nodes of huffman tree
@@ -103,8 +108,8 @@ int main(int argc, char **argv) {
 
     // write src filelength, header and compressed data to output file
     compressedFile = fopen(argv[2], "wb");
-    fwrite(&inputFileLength, sizeof(size_t), 1, compressedFile);
-    fwrite(frequency, sizeof(size_t), 256, compressedFile);
+    fwrite(&inputFileLength, sizeof(uint64_t), 1, compressedFile);
+    fwrite(frequency, sizeof(uint64_t), 256, compressedFile);
     fwrite(
         compressedData,
         sizeof(unsigned char),
