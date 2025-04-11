@@ -1,36 +1,36 @@
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
-// Sriram Madhivanan
-// MPI Implementation
-/*---------------------------------------------------------------------------------------------------------------------------------------------*/
+// Based on Sriram Madhivanan's MPI implementation
 
 #include "../../include/clockcycle.h"
+#include "../../include/parallelHeaderHost.h"
 #include "mpi.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// #include "../include/serialHeader.h"
-// extern void runCudaLand( int myrank );
-// struct huffmanDictionary huffmanDictionary[256];
-// struct huffmanTree *head_huffmanTreeNode = NULL;
-// struct huffmanTree huffmanTreeNode[512];
+
+struct huffmanTree *head_huffmanTreeNode;
+struct huffmanTree huffmanTreeNode[512];
+struct huffmanDictionary huffmanDictionary;
+unsigned char bitSequenceConstMemory[256][255];
+unsigned int constMemoryFlag = 0;
 
 extern void runCudaLand(
     int myrank,
-    unsigned char *inputData, // local chunk
-    uint64_t blockLength,
-    uint64_t *frequency,              // global freq
-    unsigned char **d_compressedData, // returned GPU comp buffer
-    uint64_t *compBlockLength
-); // returned comp length
+    unsigned char *inputFileData,
+    uint64_t inputFileLength,
+    unsigned char **hostCompressedData,
+    uint64_t hostCompressedSize
+);
+
+void build_hoffman(uint64_t frequency[256]);
 
 int main(int argc, char *argv[]) {
     uint64_t start, end;
     // unsigned int cpu_time_used;
     unsigned int rank, numProcesses;
     uint64_t i, j, blockLength;
-    uint64_t *compBlockLengthArray;
+    uint64_t *bit_length_array;
     // unsigned int distinctCharacterCount, combinedHuffmanNodes;
-    uint64_t frequency[256] = {0}, inputFileLength, compBlockLength;
+    uint64_t frequency[256] = {0}, global_frequency[256], inputFileLength;
     unsigned char *inputFileData, *compressedData;
     // , writeBit = 0, bitsFilled = 0, bitSequence[255], bitSequenceLength = 0;
     FILE *inputFile;
@@ -61,7 +61,6 @@ int main(int argc, char *argv[]) {
     MPI_Bcast(&inputFileLength, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
 
     // get file chunk size
-
     blockLength = inputFileLength / numProcesses;
 
     if (rank == (numProcesses - 1)) {
@@ -97,84 +96,22 @@ int main(int argc, char *argv[]) {
 
     // a mpi allreduce so all the rank will use the same hoffman tree
     MPI_Allreduce(
-        MPI_IN_PLACE,
         frequency,
+        global_frequency,
         256,
         MPI_UINT64_T,
         MPI_SUM,
         MPI_COMM_WORLD
     );
 
-    // compressedData = (unsigned char *)malloc(blockLength * sizeof(unsigned
-    // char));
-    compBlockLengthArray = (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
+    build_hoffman(global_frequency);
 
-    /*
-    // initialize nodes of huffman tree
-    distinctCharacterCount = 0;
-    for (i = 0; i < 256; i++){
-        if (frequency[i] > 0){
-            huffmanTreeNode[distinctCharacterCount].count = frequency[i];
-            huffmanTreeNode[distinctCharacterCount].letter = i;
-            huffmanTreeNode[distinctCharacterCount].left = NULL;
-            huffmanTreeNode[distinctCharacterCount].right = NULL;
-            distinctCharacterCount++;
-        }
+    /** The expected length in bits of this chunk */
+    uint64_t chunk_bit_length = 0;
+    for (i = 0; i < 256; ++i) {
+        chunk_bit_length +=
+            huffmanDictionary.bitSequenceLength[i] * frequency[i];
     }
-
-    // build tree
-    for (i = 0; i < distinctCharacterCount - 1; i++){
-        combinedHuffmanNodes = 2 * i;
-        sortHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
-        buildHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
-    }
-
-    if(distinctCharacterCount == 1){
-      head_huffmanTreeNode = &huffmanTreeNode[0];
-    }
-
-    // build table having the bitSequence sequence and its length
-    buildHuffmanDictionary(head_huffmanTreeNode, bitSequence,
-    bitSequenceLength);
-    // compress
-    compBlockLength = 0;
-    for (i = 0; i < blockLength; i++){
-        for (j = 0; j < huffmanDictionary[inputFileData[i]].bitSequenceLength;
-    j++){ if (huffmanDictionary[inputFileData[i]].bitSequence[j] == 0){ writeBit
-    = writeBit << 1; bitsFilled++;
-            }
-            else{
-                writeBit = (writeBit << 1) | 01;
-                bitsFilled++;
-            }
-            if (bitsFilled == 8){
-                compressedData[compBlockLength] = writeBit;
-                bitsFilled = 0;
-                writeBit = 0;
-                compBlockLength++;
-            }
-        }
-    }
-
-    if (bitsFilled != 0){
-        for (i = 0; (unsigned char)i < 8 - bitsFilled; i++){
-            writeBit = writeBit << 1;
-        }
-        compressedData[compBlockLength] = writeBit;
-        compBlockLength++;
-    }
-
-    // calculate length of compressed data
-    //compBlockLength = compBlockLength + 1024;
-    */
-
-    // unsigned char *gpuCompressed = NULL; // the bridging function will
-    // allocate
-    //  and return a pointer. Or we can do it ourselves.
-    // unsigned int gpuCompSize = 0;
-
-    unsigned char *gpuCompressedData = NULL;
-    uint64_t gpuCompressedSize = 0;
 
     // printf("%d", blockLength);
     printf("Rank %d: blockLength = %d\n", rank, blockLength);
@@ -193,31 +130,45 @@ int main(int argc, char *argv[]) {
     printf("]\n");
 
     printf("Rank %d: frequency[] = { ", rank);
+    uint64_t sum_global_frequencies = 0;
     for (int i = 0; i < 256; i++) {
-        if (frequency[i] > 0) {
-            printf("%c: %llu  ", (i >= 32 && i <= 126 ? i : '.'), frequency[i]);
+        sum_global_frequencies += global_frequency[i];
+        if (global_frequency[i] > 0) {
+            printf(
+                "%c: %llu  ",
+                (i >= 32 && i <= 126 ? i : '.'),
+                global_frequency[i]
+            );
         }
     }
+    printf("}\n");
+    if (sum_global_frequencies != inputFileLength) {
+        fprintf(
+            stderr,
+            "WARNING: sum of global frequencies %llu does not equal input file "
+            "length %llu\n",
+            sum_global_frequencies,
+            inputFileLength
+        );
+    }
+
     runCudaLand(
         rank,
         inputFileData,
         blockLength,
-        frequency,
-        &gpuCompressedData,
-        &gpuCompressedSize
+        &compressedData,
+        chunk_bit_length
     );
 
-    compressedData = NULL;               // init first
-    compressedData = gpuCompressedData;  // pass the data
-    compBlockLength = gpuCompressedSize; // pass the data size
-    compBlockLengthArray[rank] = compBlockLength;
+    bit_length_array = (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
+    bit_length_array[rank] = chunk_bit_length;
 
-    printf("the size of the data%d", compBlockLength);
+    printf("the size of the data %d bits\n", chunk_bit_length);
     MPI_Gather(
-        &compBlockLength,
+        &chunk_bit_length,
         1,
         MPI_UINT64_T,
-        compBlockLengthArray,
+        bit_length_array,
         1,
         MPI_UINT64_T,
         0,
@@ -227,28 +178,26 @@ int main(int argc, char *argv[]) {
     // ---- RANK 0 COMPUTES OFFSETS ----
     // We’ll store the starting offset for each rank’s data in
     // compBlockOffset[].
-    uint64_t *compBlockOffsetArray = NULL; // NEW
-    uint64_t currentOffset;
+    uint64_t *compBlockOffsetArray =
+        (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
     if (rank == 0) {
-        compBlockOffsetArray =
-            (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
-        currentOffset = sizeof(uint64_t) /*for inputFileLength*/ +
-                        sizeof(uint64_t) * 256 /*for frequency[256]*/;
+        uint64_t currentOffset =
+            sizeof(uint64_t) /*for inputFileLength*/ +
+            sizeof(uint64_t) * 256 /*for frequency[256]*/ +
+            sizeof(uint32_t) /*for number of chunks*/ +
+            sizeof(uint64_t) * numProcesses /*for chunk bit lengths*/;
 
-        // Rank 0 starts at offset = currentOffset
-        compBlockOffsetArray[0] = currentOffset;
-
-        // Then each subsequent rank i starts after rank (i-1) data
-        for (int i = 1; i < numProcesses; i++) {
-            currentOffset += compBlockLengthArray[i - 1];
+        printf("With %lu chunks and bit lengths [", numProcesses);
+        for (int i = 0; i < numProcesses; i++) {
             compBlockOffsetArray[i] = currentOffset;
+            currentOffset +=
+                bit_length_array[i] / 8 + (bit_length_array[i] % 8 != 0);
+            if (i != 0) {
+                printf(", ");
+            }
+            printf("%llu", bit_length_array[i]);
         }
-    }
-    if (rank == 0) {
-        // Rank 0 has computed compBlockOffsetArray
-    } else {
-        compBlockOffsetArray =
-            (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
+        printf("]\n");
     }
     MPI_Bcast(
         compBlockOffsetArray,
@@ -281,21 +230,39 @@ int main(int argc, char *argv[]) {
         // Write frequency array at offset 8
         MPI_File_write_at(
             mpi_compressedFile,
-            sizeof(uint64_t),
-            frequency,
+            8,
+            global_frequency,
             256,
             MPI_UINT64_T,
             MPI_STATUS_IGNORE
         );
-        // If you want to store `numProcesses` or anything else in the header,
-        // write it now in the appropriate offsets.
+
+        // Write numProcesses at offset 16
+        MPI_File_write_at(
+            mpi_compressedFile,
+            8 * 257,
+            &numProcesses,
+            1,
+            MPI_UINT32_T,
+            MPI_STATUS_IGNORE
+        );
+
+        // Write each chunk's bit length
+        MPI_File_write_at(
+            mpi_compressedFile,
+            8 * 257 + 4,
+            bit_length_array,
+            numProcesses,
+            MPI_UINT64_T,
+            MPI_STATUS_IGNORE
+        );
     }
 
     MPI_File_write_at(
         mpi_compressedFile,
         compBlockOffsetArray[rank],
         compressedData,
-        compBlockLength, // number of bytes from this rank
+        chunk_bit_length / 8 + (chunk_bit_length % 8 != 0),
         MPI_UNSIGNED_CHAR,
         MPI_STATUS_IGNORE
     );
@@ -310,18 +277,61 @@ int main(int argc, char *argv[]) {
             "nanoseconds %llu\n",
             numProcesses,
             inputFileLength,
-            currentOffset,
+            chunk_bit_length / 8 + (chunk_bit_length % 8 != 0),
             end - start
         );
     }
 
-    if (compBlockOffsetArray != NULL) {
-        free(compBlockOffsetArray);
-    }
-
+    free(compBlockOffsetArray);
     free(inputFileData);
     free(compressedData);
-    // if (compressedData) free(compressedData);
+
     MPI_Finalize();
     return 0;
+}
+
+
+/**
+ * @brief Given global frequencies, sets up the global hoffman dictionary
+ *
+ * @param frequency The set of frequencies for each byte
+ */
+void build_hoffman(uint64_t frequency[256]) {
+    uint64_t i;
+    unsigned int distinctCharacterCount = 0, combinedHuffmanNodes = 0;
+    unsigned char bitSequence[255];
+    unsigned char bitSequenceLength = 0;
+
+    head_huffmanTreeNode = NULL;
+    memset(huffmanTreeNode, 0, sizeof(huffmanTreeNode));
+
+    // 1) initialize nodes of the Huffman tree
+    for (i = 0; i < 256; i++) {
+        if (frequency[i] > 0) {
+            huffmanTreeNode[distinctCharacterCount].count = frequency[i];
+            huffmanTreeNode[distinctCharacterCount].letter = i;
+            huffmanTreeNode[distinctCharacterCount].left = NULL;
+            huffmanTreeNode[distinctCharacterCount].right = NULL;
+            distinctCharacterCount++;
+        }
+    }
+
+    // 2) build the Huffman tree
+    for (i = 0; i < distinctCharacterCount - 1; i++) {
+        combinedHuffmanNodes = 2 * i;
+        sortHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
+        buildHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
+    }
+
+    // 3) if there's only one distinct character
+    if (distinctCharacterCount == 1) {
+        head_huffmanTreeNode = &huffmanTreeNode[0];
+    }
+
+    // 4) build Huffman dictionary
+    buildHuffmanDictionary(
+        head_huffmanTreeNode,
+        bitSequence,
+        bitSequenceLength
+    );
 }

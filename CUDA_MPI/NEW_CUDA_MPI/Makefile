@@ -22,8 +22,8 @@ CUDALIB    = -L/usr/local/cuda-11.2/lib64/ -lcudadevrt -lcudart
 #    - parallelFunctions.cu, kernel.cu, GPUWrapper.cu (your existing CUDA code)
 #
 #    We'll produce corresponding .o files for each:
-CSRCS_C    = new_compress.c ../../include/serialFunctions.c
-CSRCS_D    = decompress.c ../../include/serialFunctions.c
+CSRCS_C    = new_compress.c ../../include/parallelFunctionsHost.c
+CSRCS_D    = decompress.c ../../include/parallelFunctionsHost.c
 CUSRCS     = runCudaLand.cu ../../include/parallelFunctions.cu ../../include/kernel.cu ../../include/GPUWrapper.cu
 
 # 4) Derive object-file names from those sources
