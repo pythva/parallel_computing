@@ -42,8 +42,7 @@ all: compress decompress
 compress: $(COBJS_C) $(CUOBJS)
 	# Use mpixlc to link everything.  Link with CUDA libs and stdc++ as needed.
 	$(MPICC) $(CFLAGS) $^ -o $@ $(CUDALIB) -lstdc++
-decompress: $(COBJS_D) $(CUOBJS)
-	# Use mpixlc to link everything.  Link with CUDA libs and stdc++ as needed.
+decompress: $(COBJS_D)
 	$(MPICC) $(CFLAGS) $^ -o $@ $(CUDALIB) -lstdc++
 
 ###############################################################################

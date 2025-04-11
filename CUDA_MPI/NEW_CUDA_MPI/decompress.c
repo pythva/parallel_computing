@@ -4,19 +4,21 @@
 #include <string.h>
 #include <time.h>
 
+/** Not all used, but required by our other files */
 struct huffmanDictionary huffmanDictionary[256];
 struct huffmanTree *head_huffmanTreeNode;
 struct huffmanTree huffmanTreeNode[512];
+
+void build_hoffman(uint64_t frequency[256]);
 
 int main(int argc, char **argv) {
     clock_t start, end;
     uint64_t cpu_time_used;
     uint64_t i, j;
-    unsigned int distinctCharacterCount, combinedHuffmanNodes;
     uint64_t outputFileLengthCounter, outputFileLength, frequency[256],
         compressedFileLength;
     unsigned char currentInputBit, currentInputByte, *compressedData,
-        *outputData, bitSequence[255], bitSequenceLength = 0;
+        *outputData;
     struct huffmanTree *current_huffmanTreeNode;
     FILE *compressedFile, *outputFile;
 
@@ -45,31 +47,7 @@ int main(int argc, char **argv) {
     // start time measure
     start = clock();
 
-    // initialize nodes of huffman tree
-    distinctCharacterCount = 0;
-    for (i = 0; i < 256; i++) {
-        if (frequency[i] > 0) {
-            huffmanTreeNode[distinctCharacterCount].count = frequency[i];
-            huffmanTreeNode[distinctCharacterCount].letter = i;
-            huffmanTreeNode[distinctCharacterCount].left = NULL;
-            huffmanTreeNode[distinctCharacterCount].right = NULL;
-            distinctCharacterCount++;
-        }
-    }
-
-    // build tree
-    for (i = 0; i < distinctCharacterCount - 1; i++) {
-        combinedHuffmanNodes = 2 * i;
-        sortHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
-        buildHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
-    }
-
-    // build huffmanDictionary having the bitSequence sequence and its length
-    buildHuffmanDictionary(
-        head_huffmanTreeNode,
-        bitSequence,
-        bitSequenceLength
-    );
+    build_hoffman(frequency);
 
     // write the data to file
     outputData = malloc(outputFileLength * sizeof(unsigned char));
@@ -113,4 +91,36 @@ int main(int argc, char **argv) {
     free(outputData);
     free(compressedData);
     return 0;
+}
+
+/**
+ * @brief Given global frequencies, sets up the global hoffman tree
+ *
+ * @param frequency The set of frequencies for each byte
+ */
+void build_hoffman(uint64_t frequency[256]) {
+    uint64_t i;
+    unsigned int distinctCharacterCount = 0, combinedHuffmanNodes = 0;
+
+    head_huffmanTreeNode = NULL;
+    memset(huffmanTreeNode, 0, sizeof(huffmanTreeNode));
+
+    // initialize nodes of huffman tree
+    distinctCharacterCount = 0;
+    for (i = 0; i < 256; i++) {
+        if (frequency[i] > 0) {
+            huffmanTreeNode[distinctCharacterCount].count = frequency[i];
+            huffmanTreeNode[distinctCharacterCount].letter = i;
+            huffmanTreeNode[distinctCharacterCount].left = NULL;
+            huffmanTreeNode[distinctCharacterCount].right = NULL;
+            distinctCharacterCount++;
+        }
+    }
+
+    // build tree
+    for (i = 0; i < distinctCharacterCount - 1; i++) {
+        combinedHuffmanNodes = 2 * i;
+        sortHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
+        buildHuffmanTree(i, distinctCharacterCount, combinedHuffmanNodes);
+    }
 }
