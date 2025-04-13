@@ -24,7 +24,8 @@ CUDALIB    = -L/usr/local/cuda-11.2/lib64/ -lcudadevrt -lcudart
 #    We'll produce corresponding .o files for each:
 CSRCS_C    = new_compress.c ../../include/parallelFunctionsHost.c
 CSRCS_D    = decompress.c ../../include/parallelFunctionsHost.c
-CUSRCS     = runCudaLand.cu ../../include/parallelFunctions.cu ../../include/kernel.cu ../../include/GPUWrapper.cu
+# CUSRCS     = runCudaLand.cu ../../include/parallelFunctions.cu ../../include/kernel.cu ../../include/GPUWrapper.cu
+CUSRCS     = cuda_new_compress.cu
 
 # 4) Derive object-file names from those sources
 COBJS_C    = $(CSRCS_C:.c=.o)

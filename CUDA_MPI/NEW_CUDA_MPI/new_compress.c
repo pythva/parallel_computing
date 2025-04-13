@@ -13,12 +13,19 @@ struct huffmanDictionary huffmanDictionary;
 unsigned char bitSequenceConstMemory[256][255];
 unsigned int constMemoryFlag = 0;
 
-extern void runCudaLand(
-    int myrank,
-    unsigned char *inputFileData,
-    uint64_t inputFileLength,
-    unsigned char **hostCompressedData,
-    uint64_t hostCompressedSize
+// extern void runCudaLand(
+//     int myrank,
+//     unsigned char *inputFileData,
+//     uint64_t inputFileLength,
+//     unsigned char **hostCompressedData,
+//     uint64_t hostCompressedSize
+// );
+extern void launch_compression(
+    int rank,
+    unsigned char *full_input,
+    uint64_t full_input_len,
+    unsigned char *output,
+    uint64_t output_len
 );
 
 void build_hoffman(uint64_t frequency[256]);
@@ -63,9 +70,6 @@ int main(int argc, char *argv[]) {
     // get file chunk size
     blockLength = inputFileLength / numProcesses;
 
-    if (rank == (numProcesses - 1)) {
-        blockLength = inputFileLength - ((numProcesses - 1) * blockLength);
-    }
 
     // open file in each process and read data and allocate memory for
     // compressed data
@@ -77,6 +81,10 @@ int main(int argc, char *argv[]) {
         &mpi_inputFile
     );
     MPI_File_seek(mpi_inputFile, rank * blockLength, MPI_SEEK_SET);
+
+    if (rank == (numProcesses - 1)) {
+        blockLength = inputFileLength - ((numProcesses - 1) * blockLength);
+    }
 
     inputFileData =
         (unsigned char *)malloc(blockLength * sizeof(unsigned char));
@@ -114,7 +122,7 @@ int main(int argc, char *argv[]) {
     }
 
     // printf("%d", blockLength);
-    printf("Rank %d: blockLength = %d\n", rank, blockLength);
+    printf("Rank %d: blockLength = %lu\n", rank, blockLength);
 
     // Print inputFileData content (first N bytes for brevity)
     printf("Rank %d: inputFileData = [", rank);
@@ -145,25 +153,34 @@ int main(int argc, char *argv[]) {
     if (sum_global_frequencies != inputFileLength) {
         fprintf(
             stderr,
-            "WARNING: sum of global frequencies %llu does not equal input file "
-            "length %llu\n",
+            "WARNING: sum of global frequencies %lu does not equal input file "
+            "length %lu\n",
             sum_global_frequencies,
             inputFileLength
         );
     }
 
-    runCudaLand(
+    compressedData = malloc(chunk_bit_length);
+    launch_compression(
         rank,
         inputFileData,
         blockLength,
-        &compressedData,
+        compressedData,
         chunk_bit_length
     );
+
+    // runCudaLand(
+    //     rank,
+    //     inputFileData,
+    //     blockLength,
+    //     &compressedData,
+    //     chunk_bit_length
+    // );
 
     bit_length_array = (uint64_t *)malloc(numProcesses * sizeof(uint64_t));
     bit_length_array[rank] = chunk_bit_length;
 
-    printf("the size of the data %d bits\n", chunk_bit_length);
+    printf("the size of the data %lu bits\n", chunk_bit_length);
     MPI_Gather(
         &chunk_bit_length,
         1,
@@ -274,7 +291,7 @@ int main(int argc, char *argv[]) {
         end = clock_now();
         printf(
             "Finished with %u ranks | input size %llu | output size %llu | "
-            "nanoseconds %llu\n",
+            "cycles %llu\n",
             numProcesses,
             inputFileLength,
             chunk_bit_length / 8 + (chunk_bit_length % 8 != 0),
