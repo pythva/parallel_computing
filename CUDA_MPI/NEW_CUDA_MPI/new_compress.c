@@ -3,6 +3,7 @@
 #include "../../include/clockcycle.h"
 #include "../../include/parallelHeaderHost.h"
 #include "mpi.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,7 @@ int main(int argc, char *argv[]) {
     unsigned char *inputFileData, *compressedData;
     // , writeBit = 0, bitsFilled = 0, bitSequence[255], bitSequenceLength = 0;
     FILE *inputFile;
+    int err;
 
     MPI_Init(&argc, &argv);
     MPI_File mpi_inputFile, mpi_compressedFile;
@@ -64,6 +66,7 @@ int main(int argc, char *argv[]) {
         fclose(inputFile);
     }
 
+
     // broadcast size of file to all the processes
     MPI_Bcast(&inputFileLength, 1, MPI_UINT64_T, 0, MPI_COMM_WORLD);
 
@@ -73,14 +76,34 @@ int main(int argc, char *argv[]) {
 
     // open file in each process and read data and allocate memory for
     // compressed data
-    MPI_File_open(
+    err = MPI_File_open(
         MPI_COMM_WORLD,
         argv[1],
         MPI_MODE_RDONLY,
         MPI_INFO_NULL,
         &mpi_inputFile
     );
-    MPI_File_seek(mpi_inputFile, rank * blockLength, MPI_SEEK_SET);
+    if (err) {
+        fprintf(
+            stderr,
+            "Rank %d: Failed to open input file, with err %d.\n",
+            rank,
+            err
+        );
+        MPI_Abort(MPI_COMM_WORLD, err);
+        return;
+    }
+    err = MPI_File_seek(mpi_inputFile, rank * blockLength, MPI_SEEK_SET);
+    if (err) {
+        fprintf(
+            stderr,
+            "Rank %d: Failed to seek input file, with err %d.\n",
+            rank,
+            err
+        );
+        MPI_Abort(MPI_COMM_WORLD, err);
+        return;
+    }
 
     if (rank == (numProcesses - 1)) {
         blockLength = inputFileLength - ((numProcesses - 1) * blockLength);
@@ -88,13 +111,47 @@ int main(int argc, char *argv[]) {
 
     inputFileData =
         (unsigned char *)malloc(blockLength * sizeof(unsigned char));
-    MPI_File_read(
-        mpi_inputFile,
-        inputFileData,
-        blockLength,
-        MPI_UNSIGNED_CHAR,
-        &status
-    );
+    if (!inputFileData) {
+        fprintf(
+            stderr,
+            "Rank %d: Failed to allocate buffer for input data.\n",
+            rank
+        );
+        MPI_Abort(MPI_COMM_WORLD, 0);
+        return;
+    }
+    // If the block length is too big (MPI takes an `int`), we may need to do
+    // multiple reads.
+    for (uint64_t i = 0; i < blockLength; i += INT32_MAX) {
+        uint64_t next_amount =
+            blockLength - i < INT32_MAX ? blockLength - i : INT32_MAX;
+        printf(
+            "Rank %d: %llu to %llu (%llu/%d)\n",
+            rank,
+            i,
+            i + next_amount,
+            next_amount,
+            (int)next_amount
+        );
+        err = MPI_File_read(
+            mpi_inputFile,
+            &inputFileData[i],
+            next_amount,
+            MPI_UNSIGNED_CHAR,
+            &status
+        );
+        if (err) {
+            fprintf(
+                stderr,
+                "Rank %d: Failed to read input file, with err %d.\n",
+                rank,
+                err
+            );
+            MPI_Abort(MPI_COMM_WORLD, err);
+            return;
+        }
+    }
+    MPI_File_close(&mpi_inputFile);
 
 
     // find the frequency of each symbols
@@ -274,18 +331,45 @@ int main(int argc, char *argv[]) {
             MPI_STATUS_IGNORE
         );
     }
+    uint64_t output_len_bytes =
+        chunk_bit_length / 8 + (chunk_bit_length % 8 != 0);
 
-    MPI_File_write_at(
-        mpi_compressedFile,
-        compBlockOffsetArray[rank],
-        compressedData,
-        chunk_bit_length / 8 + (chunk_bit_length % 8 != 0),
-        MPI_UNSIGNED_CHAR,
-        MPI_STATUS_IGNORE
-    );
+    for (uint64_t i = 0; i < output_len_bytes; i += INT32_MAX) {
+        uint64_t write_len =
+            output_len_bytes - i > INT32_MAX ? INT32_MAX : output_len_bytes - i;
+        err = MPI_File_write_at(
+            mpi_compressedFile,
+            compBlockOffsetArray[rank] + i,
+            &compressedData[i],
+            write_len,
+            MPI_UNSIGNED_CHAR,
+            MPI_STATUS_IGNORE
+        );
+        if (err) {
+            fprintf(
+                stderr,
+                "Rank %d: Failed to write to output file from %lu-%lu "
+                "(%lu/%d), with err %d.\n",
+                rank,
+                i,
+                i + write_len,
+                write_len,
+                write_len,
+                err
+            );
+            MPI_Abort(MPI_COMM_WORLD, err);
+            return;
+        }
+        printf(
+            "Rank %d: Writing %lu-%lu (%lu)\n",
+            rank,
+            i,
+            i + write_len,
+            write_len
+        );
+    }
 
     MPI_File_close(&mpi_compressedFile);
-    MPI_File_close(&mpi_inputFile);
     MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0) {
         end = clock_now();

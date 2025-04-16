@@ -25,7 +25,7 @@ void launch_compression(
 );
 }
 
-#define DEBUG_CPU
+// #define DEBUG_CPU
 #ifdef DEBUG_CPU
 void calculate_len_cpu(
     unsigned char *input,
